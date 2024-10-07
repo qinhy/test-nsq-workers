@@ -13,6 +13,7 @@ class MessageProcessor:
         # Initialize NSQ reader and start message processing
         self._create_reader(nsqd_address, lookupd_address)
         self._start_message_processing(process_message)
+        # nsq.run()
 
     def _create_reader(self, nsqd_address, lookupd_address):
         """Sets up an NSQ reader to listen for messages on the specified topic and channel."""
@@ -31,8 +32,8 @@ class MessageProcessor:
     def _message_callback(self, msg:nsq.Message):
         """Handles and queues incoming messages for processing."""
         try:
-            print(f"Received message on {self.msg_channel}: {msg.body}")
-            self._msg_queue.put(msg.body)
+            # print(f"Received message on {self.msg_channel}: {msg.body}")
+            self._msg_queue.put(msg)
             msg.finish()  # Acknowledge message as processed
         except Exception as e:
             print(f"Error processing message: {e}")
@@ -43,7 +44,7 @@ class MessageProcessor:
             msg = self._msg_queue.get()
             if msg is None:continue
             process_message(msg)
-            print(f"Processing general msg: {msg}")
+            # print(f"Processing general msg: {msg}")
             # Add actual task processing logic here
             self._msg_queue.task_done()
 
@@ -68,6 +69,7 @@ class MessagePublisher:
         self.writer = nsq.Writer([nsqd_address])
         self.pub_callback = tornado.ioloop.PeriodicCallback(self.pub_message, period)
         self.pub_callback.start()
+        # nsq.run()
 
     def pub_message(self):
         """Publishes a message periodically."""
@@ -84,6 +86,25 @@ class MessagePublisher:
         """Stops the periodic publishing."""
         self.pub_callback.stop()
 
+class MessageQueuePublisher(MessagePublisher):
+
+    def __init__(self, msg_topic, nsqd_address, period=1000):
+        super().__init__(self, 'queue', msg_topic, nsqd_address, period)
+        self.queue = Queue()
+
+    def put(self,obj):
+        return self.queue.put(obj)
+    
+    def pub_message(self):
+        """Publishes a message periodically."""
+        try:
+            queue:Queue = getattr(self.obj, self.name)
+            if not queue.empty():
+                self.writer.pub(self.msg_topic, str(queue.get()).encode(), self.finish_pub)
+                queue.task_done()
+        except Exception as e:
+            print(f"Error publishing message: {e}")
+
 class Worker:
     def __init__(self, nsqd_address, lookupd_address):
         self.worker_id = str(uuid.uuid4())
@@ -96,22 +117,31 @@ class Worker:
 
         # Initialize message processors for general and global tasks
         self._general_task = MessageProcessor(
-            self.task_topic, 'general', nsqd_address, lookupd_address, self._process_task
+            self.task_topic, 'general', nsqd_address, lookupd_address, self._process_general_task
         )
         self._global_task = MessageProcessor(
-            self.task_topic, self.worker_id, nsqd_address, lookupd_address, self._process_task
+            self.task_topic, self.worker_id, nsqd_address, lookupd_address, self._process_specify_task
         )
 
         # Start the NSQ event loop
         self._start_nsq_event_loop()
 
-    def _process_task(self, msg: nsq.Message):
-        """Processes incoming tasks from the queue."""
-        task = msg.body
-        if task is None:
-            return
-        print(f"Processing task: {task}")
+    def worker_print(self,msg):
+        print(f"[Worker:{self.worker_id}]: {msg}")
 
+    def _process_general_task(self, msg: nsq.Message):
+        msg:str = msg.body.decode()
+        if 'general' in msg.lower():
+            self.worker_print(f"Processing general task: {msg}")
+            
+    def _process_specify_task(self, msg: nsq.Message):
+        msg:str = msg.body.decode()
+        if 'global' in msg.lower():
+            self.worker_print(f"Processing task: {msg}")            
+        
+        if self.worker_id in msg.lower():
+            self.worker_print(f"Processing task: {msg}")
+            
     def _start_nsq_event_loop(self):
         """Starts the NSQ event loop."""
         try:
@@ -151,19 +181,30 @@ def ex1():
     example_obj = ExampleObject()
     publisher = MessagePublisher(example_obj, 'example_attr', 'example_topic', nsqd_address)
 
+    nsq.run()
+    # To simulate graceful shutdown:
+    import time
+
+    try:
+        time.sleep(100)  # Simulate running worker for 10 seconds
+    finally:
+        publisher.shutdown()
+        processor.shutdown()
+
 def ex2():
     # Example usage for Worker:
     # Initialize a worker that processes tasks and sends alive signals
+    worker_alive = MessageProcessor('alive', 'general', nsqd_address, lookupd_address, example_process_message)
     worker = Worker(nsqd_address, lookupd_address)
 
     # To simulate graceful shutdown:
     import time
 
     try:
-        time.sleep(10)  # Simulate running worker for 10 seconds
+        time.sleep(100)  # Simulate running worker for 10 seconds
     finally:
         worker.shutdown()
 
 
-ex1()
-ex2()
+# ex1()
+# ex2()
