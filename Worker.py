@@ -87,10 +87,12 @@ class MessagePublisher:
         self.pub_callback.stop()
 
 class MessageQueuePublisher(MessagePublisher):
+    SIGNAL_STOP = 'stop'
 
     def __init__(self, msg_topic, nsqd_address, period=1000):
         super().__init__(self, 'queue', msg_topic, nsqd_address, period)
         self.queue = Queue()
+        threading.Thread(target=tornado.ioloop.IOLoop.current().start).start()
 
     def put(self,obj):
         return self.queue.put(obj)
@@ -100,7 +102,10 @@ class MessageQueuePublisher(MessagePublisher):
         try:
             queue:Queue = getattr(self.obj, self.name)
             if not queue.empty():
-                self.writer.pub(self.msg_topic, str(queue.get()).encode(), self.finish_pub)
+                msg = str(queue.get())
+                if msg == self.SIGNAL_STOP:
+                    tornado.ioloop.IOLoop.current().stop()
+                self.writer.pub(self.msg_topic, msg.encode(), self.finish_pub)
                 queue.task_done()
         except Exception as e:
             print(f"Error publishing message: {e}")
