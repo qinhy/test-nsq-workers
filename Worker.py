@@ -5,25 +5,25 @@ import nsq
 import tornado.ioloop
 
 class MessageProcessor:
-    def __init__(self, msg_topic, msg_channel, nsqd_address, lookupd_address, process_message):
+    def __init__(self, msg_topic, msg_channel, lookupd_http_address, process_message):
         self.msg_topic = msg_topic
         self.msg_channel = msg_channel
         self._msg_queue = Queue()
 
         # Initialize NSQ reader and start message processing
-        self._create_reader(nsqd_address, lookupd_address)
+        self._create_reader(lookupd_http_address)
         self._start_message_processing(process_message)
         # nsq.run()
 
-    def _create_reader(self, nsqd_address, lookupd_address):
+    def _create_reader(self, lookupd_http_address):
         """Sets up an NSQ reader to listen for messages on the specified topic and channel."""
         try:
             nsq.Reader(
                 message_handler=self._message_callback,
                 topic=self.msg_topic,
                 channel=self.msg_channel,
-                nsqd_tcp_addresses=[nsqd_address],
-                lookupd_http_addresses=[lookupd_address],
+                # nsqd_tcp_addresses=[nsqd_address],
+                lookupd_http_addresses=[lookupd_http_address],
                 max_in_flight=10
             )
         except Exception as e:
@@ -106,21 +106,21 @@ class MessageQueuePublisher(MessagePublisher):
             print(f"Error publishing message: {e}")
 
 class Worker:
-    def __init__(self, nsqd_address, lookupd_address):
+    def __init__(self, lookupd_http_address):
         self.worker_id = str(uuid.uuid4())
         self.task_topic = 'task'
         self.alive_topic = 'alive'
-        self.nsqd_address = nsqd_address
+        self.nsqd_address = '0.0.0.0'
 
         # Initialize alive signal publisher
         self.alive_publisher = MessagePublisher(self, 'worker_id', self.alive_topic, nsqd_address)
 
         # Initialize message processors for general and global tasks
         self._general_task = MessageProcessor(
-            self.task_topic, 'general', nsqd_address, lookupd_address, self._process_general_task
+            self.task_topic, 'general', lookupd_http_address, self._process_general_task
         )
         self._global_task = MessageProcessor(
-            self.task_topic, self.worker_id, nsqd_address, lookupd_address, self._process_specify_task
+            self.task_topic, self.worker_id, lookupd_http_address, self._process_specify_task
         )
 
         # Start the NSQ event loop
@@ -164,13 +164,13 @@ def example_process_message(msg):
     print(f"Processing message: {msg}")
 
 nsqd_address = '127.0.0.1:4150'
-lookupd_address = '127.0.0.1:4161'
+lookupd_http_address = '127.0.0.1:4161'
 
 def ex1():
     # Setting up the message processor
     msg_topic = 'example_topic'
     msg_channel = 'example_channel'
-    processor = MessageProcessor(msg_topic, msg_channel, nsqd_address, lookupd_address, example_process_message)
+    processor = MessageProcessor(msg_topic, msg_channel, nsqd_address, lookupd_http_address, example_process_message)
 
     # Example usage for MessagePublisher:
     # Publishing a message based on an object attribute
@@ -194,8 +194,8 @@ def ex1():
 def ex2():
     # Example usage for Worker:
     # Initialize a worker that processes tasks and sends alive signals
-    worker_alive = MessageProcessor('alive', 'general', nsqd_address, lookupd_address, example_process_message)
-    worker = Worker(nsqd_address, lookupd_address)
+    worker_alive = MessageProcessor('alive', 'general', nsqd_address, lookupd_http_address, example_process_message)
+    worker = Worker(nsqd_address, lookupd_http_address)
 
     # To simulate graceful shutdown:
     import time
